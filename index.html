@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Galería de Recuerdos</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+  <style>
+    :root {
+      --bg: #0c0d0e;
+      --card-bg: #141618;
+      --border: rgba(255, 255, 255, 0.08);
+      --text-main: #f5f5f7;
+      --text-muted: #86868b;
+      --accent: #ffffff;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    body {
+      background-color: var(--bg);
+      color: var(--text-main);
+      font-family: 'Plus Jakarta Sans', -apple-system, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding-bottom: 60px;
+    }
+    .app-container { width: 100%; max-width: 480px; padding: 0 16px; }
+    header {
+      padding: 24px 0 16px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .top-bar { display: flex; justify-content: space-between; align-items: center; }
+    .tag-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border);
+      padding: 5px 12px;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+    .tag-pill span.dot { width: 6px; height: 6px; background: #10b981; border-radius: 50%; box-shadow: 0 0 8px #10b981; }
+    .gallery-intro { display: flex; justify-content: space-between; align-items: flex-end; }
+    .title-block h1 { font-size: 1.35rem; font-weight: 700; letter-spacing: -0.02em; text-transform: capitalize; }
+    .title-block p { font-size: 0.8rem; color: var(--text-muted); margin-top: 2px; }
+    .btn-upload-direct {
+      background: var(--accent);
+      color: #000;
+      padding: 10px 18px;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      user-select: none;
+    }
+    .btn-upload-direct:active { transform: scale(0.96); }
+    #file-input { display: none; }
+    .status-banner {
+      width: 100%;
+      max-width: 480px;
+      margin: 12px auto 0 auto;
+      padding: 10px 14px;
+      border-radius: 10px;
+      font-size: 0.8rem;
+      text-align: center;
+      display: none;
+    }
+    .status-banner.active { display: block; background: rgba(16, 185, 129, 0.15); border: 1px solid #10b981; color: #34d399; }
+    main { margin-top: 20px; }
+    .gallery-feed { display: flex; flex-direction: column; gap: 24px; }
+    .feed-item { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+    .feed-item img { width: 100%; height: auto; display: block; }
+    .feed-meta { padding: 10px 14px; font-size: 0.72rem; color: var(--text-muted); display: flex; justify-content: space-between; }
+    .empty-state { text-align: center; padding: 70px 20px; color: var(--text-muted); }
+    .empty-state h2 { font-size: 1.1rem; color: var(--text-main); margin-bottom: 6px; }
+    .empty-state p { font-size: 0.85rem; line-height: 1.4; }
+  </style>
+</head>
+<body>
+  <div class="app-container">
+    <header>
+      <div class="top-bar">
+        <div class="tag-pill">
+          <span class="dot"></span>
+          <span id="tag-badge">NFC</span>
+        </div>
+      </div>
+      <div class="gallery-intro">
+        <div class="title-block">
+          <h1 id="gallery-title">Recuerdos</h1>
+          <p id="photo-count">Cargando...</p>
+        </div>
+        <label for="file-input" class="btn-upload-direct" id="upload-label">
+          <span id="btn-text">+ Subir fotos</span>
+        </label>
+        <input type="file" id="file-input" accept="image/*" multiple />
+      </div>
+    </header>
+    <div id="status-bar" class="status-banner"></div>
+    <main>
+      <div id="gallery-container" class="gallery-feed"></div>
+    </main>
+  </div>
+  <script>
+    const SUPABASE_URL = "https://jpgtvezcifyvbjgbgrhb.supabase.co";
+    const SUPABASE_ANON_KEY = "sb_publishable_CM1RhO-Zk6RsCcKTgx-w2w_bj4ljrWZ";
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    const urlParams = new URLSearchParams(window.location.search);
+    const tagId = (urlParams.get('id') || urlParams.get('tag') || 'recuerdo-demo').trim().toLowerCase();
+    
+    document.getElementById('tag-badge').textContent = tagId;
+    document.getElementById('gallery-title').textContent = tagId.replace(/-/g, ' ').replace(/_/g, ' ');
+
+    const fileInput = document.getElementById('file-input');
+    const btnText = document.getElementById('btn-text');
+    const uploadLabel = document.getElementById('upload-label');
+    const statusBar = document.getElementById('status-bar');
+    const galleryContainer = document.getElementById('gallery-container');
+    const photoCountEl = document.getElementById('photo-count');
+    let currentPhotos = [];
+
+    function showStatus(text) { statusBar.className = 'status-banner active'; statusBar.textContent = text; }
+    function clearStatus() { statusBar.className = 'status-banner'; statusBar.textContent = ''; }
+
+    async function fetchPhotos() {
+      try {
+        const { data, error } = await supabase.from('fotos').select('*').eq('tag_id', tagId).order('created_at', { ascending: false });
+        if (error) throw error;
+        currentPhotos = data || [];
+        renderGallery();
+      } catch (err) {
+        photoCountEl.textContent = "Error";
+      }
+    }
+
+    function renderGallery() {
+      photoCountEl.textContent = `${currentPhotos.length} ${currentPhotos.length === 1 ? 'fotografía' : 'fotografías'}`;
+      galleryContainer.innerHTML = '';
+      if (currentPhotos.length === 0) {
+        galleryContainer.innerHTML = '<div class="empty-state"><h2>Galería lista</h2><p>Toca arriba en <strong>+ Subir fotos</strong> para agregar recuerdos a este chip.</p></div>';
+        return;
+      }
+      currentPhotos.forEach((item, index) => {
+        const dateStr = item.created_at ? new Date(item.created_at).toLocaleDateString('es-MX', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Recuerdo';
+        const card = document.createElement('div');
+        card.className = 'feed-item';
+        card.innerHTML = `<img src="${item.url}" alt="Foto" loading="lazy" /><div class="feed-meta"><span>#${String(index + 1).padStart(2, '0')}</span><span>${dateStr}</span></div>`;
+        galleryContainer.appendChild(card);
+      });
+    }
+
+    fileInput.addEventListener('change', async (e) => {
+      const files = Array.from(e.target.files);
+      if (!files.length) return;
+      btnText.textContent = "Subiendo...";
+      uploadLabel.style.opacity = "0.7";
+      showStatus(`Subiendo ${files.length} imagen(es)...`);
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        showStatus(`Subiendo ${i + 1} de ${files.length}...`);
+        try {
+          const ext = file.name.split('.').pop() || 'jpg';
+          const filePath = `${tagId}/${Date.now()}_${Math.random().toString(36).substring(7)}.${ext}`;
+          const { error: uploadError } = await supabase.storage.from('galerias').upload(filePath, file, { contentType: file.type || 'image/jpeg', upsert: false });
+          if (uploadError) throw uploadError;
+          const { data } = supabase.storage.from('galerias').getPublicUrl(filePath);
+          await supabase.from('fotos').insert([{ tag_id: tagId, url: data.publicUrl }]);
+        } catch (err) {
+          alert("Error al subir: " + (err.message || JSON.stringify(err)));
+          btnText.textContent = "+ Subir fotos";
+          uploadLabel.style.opacity = "1";
+          clearStatus();
+          return;
+        }
+      }
+      showStatus("¡Subida completada!");
+      btnText.textContent = "+ Subir fotos";
+      uploadLabel.style.opacity = "1";
+      fileInput.value = '';
+      setTimeout(clearStatus, 2500);
+      fetchPhotos();
+    });
+
+    fetchPhotos();
+  </script>
+</body>
+</html>
