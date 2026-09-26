@@ -28,7 +28,7 @@
       align-items: center;
       padding-bottom: 60px;
     }
-    .app-container { width: 100%; max-width: 480px; padding: 0 16px; }
+    .app-container { width: 100%; max-width: 1120px; padding: 0 16px; }
     header {
       padding: 24px 0 16px 0;
       display: flex;
@@ -86,13 +86,16 @@
     .status-banner.active { display: block; background: rgba(16, 185, 129, 0.15); border: 1px solid #10b981; color: #34d399; }
     .status-banner.error { display: block; background: rgba(239, 68, 68, 0.12); border: 1px solid #ef4444; color: #fecaca; }
     main { margin-top: 20px; }
-    .gallery-feed { display: flex; flex-direction: column; gap: 24px; }
-    .feed-item { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
-    .feed-item img { width: 100%; height: auto; display: block; }
-    .feed-meta { padding: 10px 14px; font-size: 0.72rem; color: var(--text-muted); display: flex; justify-content: space-between; }
-    .empty-state { text-align: center; padding: 70px 20px; color: var(--text-muted); }
+    .gallery-feed { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+    .feed-item { min-width: 0; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .feed-item a { display: block; overflow: hidden; background: var(--card-bg); }
+    .feed-item img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; transition: transform 180ms ease; }
+    .feed-item a:hover img { transform: scale(1.025); }
+    .feed-meta { padding: 8px 10px; font-size: 0.68rem; color: var(--text-muted); display: flex; justify-content: space-between; gap: 8px; }
+    .empty-state { grid-column: 1 / -1; text-align: center; padding: 70px 20px; color: var(--text-muted); }
     .empty-state h2 { font-size: 1.1rem; color: var(--text-main); margin-bottom: 6px; }
     .empty-state p { font-size: 0.85rem; line-height: 1.4; }
+    @media (max-width: 700px) { .gallery-feed { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; } }
   </style>
 </head>
 <body>
@@ -230,15 +233,21 @@
         const dateStr = item.created_at ? new Date(item.created_at).toLocaleDateString('es', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Recuerdo';
         const card = document.createElement('div');
         card.className = 'feed-item';
+        const link = document.createElement('a');
+        link.href = item.url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.setAttribute('aria-label', `Abrir fotografía ${index + 1} en tamaño completo`);
         const image = document.createElement('img');
         image.src = item.url;
         image.alt = `Fotografía ${index + 1}`;
         image.loading = 'lazy';
         if (item.local) renderedObjectUrls.push(item.url);
+        link.appendChild(image);
         const meta = document.createElement('div');
         meta.className = 'feed-meta';
         meta.textContent = `#${String(index + 1).padStart(2, '0')} · ${dateStr}${item.local ? ' · Solo en este navegador' : ''}`;
-        card.append(image, meta);
+        card.append(link, meta);
         galleryContainer.appendChild(card);
       });
     }
