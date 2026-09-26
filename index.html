@@ -37,6 +37,9 @@
       border-bottom: 1px solid var(--border);
     }
     .top-bar { display: flex; justify-content: space-between; align-items: center; }
+    .top-actions { display: flex; align-items: center; gap: 10px; }
+    .btn-share { background: transparent; border: 1px solid var(--border); color: var(--text-main); padding: 7px 12px; border-radius: 999px; font: inherit; font-size: 0.75rem; font-weight: 600; cursor: pointer; }
+    .btn-share:hover { border-color: var(--text-muted); }
     .tag-pill {
       display: inline-flex;
       align-items: center;
@@ -81,6 +84,7 @@
       display: none;
     }
     .status-banner.active { display: block; background: rgba(16, 185, 129, 0.15); border: 1px solid #10b981; color: #34d399; }
+    .status-banner.error { display: block; background: rgba(239, 68, 68, 0.12); border: 1px solid #ef4444; color: #fecaca; }
     main { margin-top: 20px; }
     .gallery-feed { display: flex; flex-direction: column; gap: 24px; }
     .feed-item { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
@@ -99,6 +103,9 @@
           <span class="dot"></span>
           <span id="tag-badge">NFC</span>
         </div>
+        <div class="top-actions">
+          <button type="button" class="btn-share" id="share-button">Copiar enlace</button>
+        </div>
       </div>
       <div class="gallery-intro">
         <div class="title-block">
@@ -111,7 +118,7 @@
         <input type="file" id="file-input" accept="image/*" multiple />
       </div>
     </header>
-    <div id="status-bar" class="status-banner"></div>
+    <div id="status-bar" class="status-banner" role="status" aria-live="polite"></div>
     <main>
       <div id="gallery-container" class="gallery-feed"></div>
     </main>
@@ -133,33 +140,105 @@
     const galleryContainer = document.getElementById('gallery-container');
     const photoCountEl = document.getElementById('photo-count');
     let currentPhotos = [];
+    let renderedObjectUrls = [];
 
-    function showStatus(text) { statusBar.className = 'status-banner active'; statusBar.textContent = text; }
+    function openLocalDatabase() {
+      return new Promise((resolve, reject) => {
+        const request = indexedDB.open('galeria-recuerdos', 1);
+        request.onupgradeneeded = () => request.result.createObjectStore('fotos', { keyPath: 'id' });
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+    }
+
+    async function saveLocalPhoto(file) {
+      const database = await openLocalDatabase();
+      return new Promise((resolve, reject) => {
+        const transaction = database.transaction('fotos', 'readwrite');
+        transaction.objectStore('fotos').add({
+          id: `${tagId}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          tag_id: tagId,
+          created_at: new Date().toISOString(),
+          blob: file
+        });
+        transaction.oncomplete = () => { database.close(); resolve(); };
+        transaction.onerror = () => { database.close(); reject(transaction.error); };
+        transaction.onabort = () => { database.close(); reject(transaction.error); };
+      });
+    }
+
+    async function loadLocalPhotos() {
+      const database = await openLocalDatabase();
+      return new Promise((resolve, reject) => {
+        const transaction = database.transaction('fotos', 'readonly');
+        const request = transaction.objectStore('fotos').getAll();
+        request.onsuccess = () => resolve(request.result
+          .filter(item => item.tag_id === tagId)
+          .map(item => ({ ...item, url: URL.createObjectURL(item.blob), local: true })));
+        request.onerror = () => reject(request.error);
+        transaction.oncomplete = () => database.close();
+        transaction.onerror = () => { database.close(); reject(transaction.error); };
+      });
+    }
+
+    function showStatus(text, type = 'active') { statusBar.className = `status-banner ${type}`; statusBar.textContent = text; }
     function clearStatus() { statusBar.className = 'status-banner'; statusBar.textContent = ''; }
 
+    document.getElementById('share-button').addEventListener('click', async () => {
+      const galleryLink = new URL(window.location.href);
+      galleryLink.searchParams.delete('tag');
+      galleryLink.searchParams.set('id', tagId);
+      try {
+        await navigator.clipboard.writeText(galleryLink.href);
+        showStatus('Enlace de esta galería copiado. Puedes guardarlo en el NFC.');
+      } catch (err) {
+        showStatus(`No se pudo copiar. Enlace para el NFC: ${galleryLink.href}`, 'error');
+      }
+    });
+
     async function fetchPhotos() {
+      let cloudPhotos = [];
+      let cloudError = null;
       try {
         const { data, error } = await supabase.from('fotos').select('*').eq('tag_id', tagId).order('created_at', { ascending: false });
         if (error) throw error;
-        currentPhotos = data || [];
-        renderGallery();
+        cloudPhotos = data || [];
       } catch (err) {
-        photoCountEl.textContent = "Error";
+        cloudError = err;
       }
+      try {
+        const localPhotos = await loadLocalPhotos();
+        currentPhotos = [...cloudPhotos, ...localPhotos].sort((first, second) => new Date(second.created_at) - new Date(first.created_at));
+      } catch (err) {
+        currentPhotos = cloudPhotos;
+        if (!cloudError) cloudError = err;
+      }
+      renderGallery();
+      if (cloudError) showStatus('No se pudo conectar con la nube. Se muestran las fotos guardadas en este navegador.', 'error');
     }
 
     function renderGallery() {
+      renderedObjectUrls.forEach(url => URL.revokeObjectURL(url));
+      renderedObjectUrls = [];
       photoCountEl.textContent = `${currentPhotos.length} ${currentPhotos.length === 1 ? 'fotografía' : 'fotografías'}`;
       galleryContainer.innerHTML = '';
       if (currentPhotos.length === 0) {
-        galleryContainer.innerHTML = '<div class="empty-state"><h2>Galería lista</h2><p>Toca arriba en <strong>+ Subir fotos</strong> para agregar recuerdos a este chip.</p></div>';
+        galleryContainer.innerHTML = '<div class="empty-state"><h2>Tu galería está lista</h2><p>Sube fotos y volverán a aparecer aquí cuando regreses.</p></div>';
         return;
       }
       currentPhotos.forEach((item, index) => {
-        const dateStr = item.created_at ? new Date(item.created_at).toLocaleDateString('es-MX', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Recuerdo';
+        const dateStr = item.created_at ? new Date(item.created_at).toLocaleDateString('es', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Recuerdo';
         const card = document.createElement('div');
         card.className = 'feed-item';
-        card.innerHTML = `<img src="${item.url}" alt="Foto" loading="lazy" /><div class="feed-meta"><span>#${String(index + 1).padStart(2, '0')}</span><span>${dateStr}</span></div>`;
+        const image = document.createElement('img');
+        image.src = item.url;
+        image.alt = `Fotografía ${index + 1}`;
+        image.loading = 'lazy';
+        if (item.local) renderedObjectUrls.push(item.url);
+        const meta = document.createElement('div');
+        meta.className = 'feed-meta';
+        meta.textContent = `#${String(index + 1).padStart(2, '0')} · ${dateStr}${item.local ? ' · Solo en este navegador' : ''}`;
+        card.append(image, meta);
         galleryContainer.appendChild(card);
       });
     }
@@ -167,33 +246,54 @@
     fileInput.addEventListener('change', async (e) => {
       const files = Array.from(e.target.files);
       if (!files.length) return;
+      const imageFiles = files.filter(file => file.type.startsWith('image/'));
+      if (!imageFiles.length) {
+        showStatus('Selecciona archivos de imagen para subir.', 'error');
+        fileInput.value = '';
+        return;
+      }
       btnText.textContent = "Subiendo...";
       uploadLabel.style.opacity = "0.7";
-      showStatus(`Subiendo ${files.length} imagen(es)...`);
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        showStatus(`Subiendo ${i + 1} de ${files.length}...`);
+      fileInput.disabled = true;
+      showStatus(`Subiendo ${imageFiles.length} imagen(es)...`);
+      let uploaded = 0;
+      let savedLocally = 0;
+      let uploadErrorMessage = '';
+      for (let i = 0; i < imageFiles.length; i++) {
+        const file = imageFiles[i];
+        showStatus(`Subiendo ${i + 1} de ${imageFiles.length}...`);
         try {
-          const ext = file.name.split('.').pop() || 'jpg';
+          const ext = file.name.split('.').pop().replace(/[^a-zA-Z0-9]/g, '') || 'jpg';
           const filePath = `${tagId}/${Date.now()}_${Math.random().toString(36).substring(7)}.${ext}`;
           const { error: uploadError } = await supabase.storage.from('galerias').upload(filePath, file, { contentType: file.type || 'image/jpeg', upsert: false });
           if (uploadError) throw uploadError;
           const { data } = supabase.storage.from('galerias').getPublicUrl(filePath);
-          await supabase.from('fotos').insert([{ tag_id: tagId, url: data.publicUrl }]);
+          const { error: insertError } = await supabase.from('fotos').insert([{ tag_id: tagId, url: data.publicUrl }]);
+          if (insertError) throw insertError;
+          uploaded++;
         } catch (err) {
-          alert("Error al subir: " + (err.message || JSON.stringify(err)));
-          btnText.textContent = "+ Subir fotos";
-          uploadLabel.style.opacity = "1";
-          clearStatus();
-          return;
+          try {
+            await saveLocalPhoto(file);
+            uploaded++;
+            savedLocally++;
+          } catch (localError) {
+            uploadErrorMessage = localError.message || err.message || 'Error desconocido';
+          }
         }
       }
-      showStatus("¡Subida completada!");
       btnText.textContent = "+ Subir fotos";
       uploadLabel.style.opacity = "1";
+      fileInput.disabled = false;
       fileInput.value = '';
-      setTimeout(clearStatus, 2500);
-      fetchPhotos();
+      if (uploaded > 0) {
+        await fetchPhotos();
+        const message = savedLocally > 0
+          ? `${uploaded} imagen(es) guardada(s). ${savedLocally} solo en este navegador.`
+          : `¡${uploaded} imagen(es) subida(s)!`;
+        showStatus(uploaded === imageFiles.length ? message : `${message} ${uploadErrorMessage}`, uploaded === imageFiles.length && savedLocally === 0 ? 'active' : 'error');
+      } else {
+        showStatus('No se pudieron guardar las imágenes. ' + uploadErrorMessage, 'error');
+      }
     });
 
     fetchPhotos();
